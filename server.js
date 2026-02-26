@@ -18,8 +18,14 @@ wss.on('connection', function connection(ws) {
         try {
             const data = JSON.parse(message);
 
+            // --- IDENTIFICAÇÃO DO USUÁRIO ---
+            if (data.type === 'identify-user') {
+                ws.userId = data.userId;
+                console.log(`Usuário identificado: ${ws.userId}`);
+            }
+
             // --- LÓGICA LIVE TV (CHAT PÚBLICO) ---
-            if (data.type === 'join-live-tv') {
+            else if (data.type === 'join-live-tv') {
                 leaveAll(ws);
                 const channelId = data.liveTvId;
                 if (!channels[channelId]) channels[channelId] = new Set();
@@ -55,6 +61,21 @@ wss.on('connection', function connection(ws) {
                     event: data.event, // Ex: 'player-setting', 'conversation-message'
                     payload: data.payload
                 }, ws);
+            }
+
+            // --- NOTIFICAÇÕES PRIVADAS (Ex: Pedidos de Join) ---
+            else if (data.type === 'private-notification') {
+                const targetUserId = data.targetUserId;
+                const notification = data.notification;
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN && client.userId == targetUserId) {
+                        client.send(JSON.stringify({
+                            type: 'notification-received',
+                            eventName: data.eventName,
+                            payload: data.payload
+                        }));
+                    }
+                });
             }
 
         } catch (e) {
