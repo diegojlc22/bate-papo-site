@@ -1,15 +1,16 @@
 const WebSocket = require('ws');
 
-// Cria o servidor do WebSocket na porta definida pelo ambiente (Render/Heroku/etc) ou 6001 localmente
+// Configuração da porta
 const PORT = process.env.PORT || 6001;
 const wss = new WebSocket.Server({ port: PORT });
 
-// Objeto para manter controle de quem está em cada canal (Live TV)
-const channels = {};
+// Canais e Salas
+const channels = {}; // Para Live TV
+const rooms = {};    // Para Watch Party
 
 wss.on('connection', function connection(ws) {
-    // Inicialmente o usuário não está em nenhum canal
     ws.currentChannel = null;
+    ws.currentRoom = null;
 
     console.log('Novo usuário conectado.');
 
@@ -17,62 +18,80 @@ wss.on('connection', function connection(ws) {
         try {
             const data = JSON.parse(message);
 
-            // Quando o usuário entra em uma página de Live TV
+            // --- LÓGICA LIVE TV (CHAT PÚBLICO) ---
             if (data.type === 'join-live-tv') {
+                leaveAll(ws);
                 const channelId = data.liveTvId;
-
-                // Remove do canal antigo, se tiver
-                leaveChannel(ws);
-
-                // Adiciona ao novo canal
-                if (!channels[channelId]) {
-                    channels[channelId] = new Set();
-                }
+                if (!channels[channelId]) channels[channelId] = new Set();
                 channels[channelId].add(ws);
                 ws.currentChannel = channelId;
-
-                console.log(`Usuário entrou no canal Live TV: ${channelId}`);
+                console.log(`Usuário entrou na Live TV: ${channelId}`);
             }
 
-            // Quando alguém envia uma mensagem
             else if (data.type === 'new-comment') {
                 const channelId = data.liveTvId;
-                console.log(`Nova mensagem no canal ${channelId}:`, data.comment);
-
-                // Envia a mensagem (faz o broadcast) para todos os outros usuários na mesma Live TV
-                if (channels[channelId]) {
-                    channels[channelId].forEach(function (client) {
-                        // Verifica se o client ainda está conectado e não é o próprio remetente (opcional, aqui envia pra todos inclusive ele pra confirmar)
-                        if (client.readyState === WebSocket.OPEN && client !== ws) {
-                            client.send(JSON.stringify({
-                                type: 'comment-received',
-                                user: data.user,
-                                comment: data.comment
-                            }));
-                        }
-                    });
-                }
+                broadcast(channels[channelId], {
+                    type: 'comment-received',
+                    user: data.user,
+                    comment: data.comment
+                }, ws);
             }
+
+            // --- LÓGICA WATCH PARTY (SALA PRIVADA) ---
+            else if (data.type === 'join-watch-party') {
+                leaveAll(ws);
+                const roomId = data.roomId;
+                if (!rooms[roomId]) rooms[roomId] = new Set();
+                rooms[roomId].add(ws);
+                ws.currentRoom = roomId;
+                console.log(`Usuário entrou na Watch Party: ${roomId}`);
+            }
+
+            else if (data.type === 'watch-party-action') {
+                const roomId = data.roomId;
+                // Broadcast de eventos como play, pause, seek ou chat privado
+                broadcast(rooms[roomId], {
+                    type: 'watch-party-received',
+                    event: data.event, // Ex: 'player-setting', 'conversation-message'
+                    payload: data.payload
+                }, ws);
+            }
+
         } catch (e) {
-            console.error('Erro ao processar mensagem JSON:', e);
+            console.error('Erro ao processar JSON:', e);
         }
     });
 
-    // Quando o usuário desconecta ou sai da página
     ws.on('close', function () {
-        leaveChannel(ws);
+        leaveAll(ws);
         console.log('Usuário desconectado.');
     });
 });
 
-function leaveChannel(ws) {
-    if (ws.currentChannel && channels[ws.currentChannel]) {
-        channels[ws.currentChannel].delete(ws);
-        // Remove o canal da memória se ficar vazio
-        if (channels[ws.currentChannel].size === 0) {
-            delete channels[ws.currentChannel];
-        }
+function broadcast(channelSet, data, sender) {
+    if (channelSet) {
+        channelSet.forEach(client => {
+            if (client.readyState === WebSocket.OPEN && client !== sender) {
+                client.send(JSON.stringify(data));
+            }
+        });
     }
 }
 
-console.log('Servidor WebSocket de Chat rodando na porta 6001 (ws://127.0.0.1:6001)');
+function leaveAll(ws) {
+    // Sair de canais Live TV
+    if (ws.currentChannel && channels[ws.currentChannel]) {
+        channels[ws.currentChannel].delete(ws);
+        if (channels[ws.currentChannel].size === 0) delete channels[ws.currentChannel];
+        ws.currentChannel = null;
+    }
+    // Sair de salas Watch Party
+    if (ws.currentRoom && rooms[ws.currentRoom]) {
+        rooms[ws.currentRoom].delete(ws);
+        if (rooms[ws.currentRoom].size === 0) delete rooms[ws.currentRoom];
+        ws.currentRoom = null;
+    }
+}
+
+console.log(`Servidor rodando na porta ${PORT}`);
+
