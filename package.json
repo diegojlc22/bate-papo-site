@@ -1,0 +1,12 @@
+{
+    "name": "alquimia-chat",
+    "version": "1.0.0",
+    "description": "WebSocket Server for Live TV Chat",
+    "main": "server.js",
+    "dependencies": {
+        "ws": "^8.13.0"
+    },
+    "scripts": {
+        "start": "node server.js"
+    }
+}
